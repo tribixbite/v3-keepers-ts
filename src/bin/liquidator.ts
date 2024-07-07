@@ -20,11 +20,17 @@ import {
   Keypair,
   PublicKey,
   Signer,
-  sendAndConfirmTransaction,
+  // sendAndConfirmTransaction,
 } from "@solana/web3.js";
 import bs58 from "bs58";
 import * as dotenv from "dotenv";
+import { sendAndConfirmTransactionOptimized } from "./landTransaction";
+import { publicKey } from "@metaplex-foundation/umi";
+// import { getPositionedMarginAccounts } from "./getActiveMarginAccounts";
 dotenv.config();
+const privateKeyString = process.env.PRIVATE_KEY as string;
+const exchangeLUT = "D36r7C1FeBUARN7f6mkzdX67UJ1b1nUJKC7SWBpDNWsa";
+// const rpcUrl = process.env.RPC_URL as string; // Use your preferred RPC URL
 
 (async function main() {
   console.log("Starting liquidator");
@@ -40,7 +46,7 @@ dotenv.config();
   // Note: only handling single exchange
   const [exchangeAddress] = getExchangePda(0);
   const liquidatorMarginAccount = translateAddress(process.env.LIQUIDATOR_MARGIN_ACCOUNT);
-  const liquidatorSigner = Keypair.fromSecretKey(bs58.decode(process.env.PRIVATE_KEY));
+  const liquidatorSigner = Keypair.fromSecretKey(bs58.decode(privateKeyString));
   const interval = parseInt(process.env.INTERVAL ?? "300");
   const commitment = process.env.COMMITMENT as Commitment | undefined;
   const sdk = new ParclV3Sdk({ rpcUrl: process.env.RPC_URL, commitment });
@@ -73,6 +79,7 @@ async function runLiquidator({
   liquidatorMarginAccount,
 }: RunLiquidatorParams): Promise<void> {
   let firstRun = true;
+  let print = false;
   // eslint-disable-next-line no-constant-condition
   while (true) {
     if (firstRun) {
@@ -92,13 +99,68 @@ async function runLiquidator({
       const [market] = getMarketPda(exchangeAddress, marketId);
       allMarketAddresses.push(market);
     }
+    if (!print) {
+      console.log(`Fetched ${allMarketAddresses.length} markets`);
+      console.log({ allMarketAddresses: allMarketAddresses.map((a) => a.toBase58()) });
+      print = true;
+    }
     const allMarkets = await sdk.accountFetcher.getMarkets(allMarketAddresses);
     const [[markets, priceFeeds], allMarginAccounts] = await Promise.all([
       getMarketMapAndPriceFeedMap(sdk, allMarkets),
       sdk.accountFetcher.getAllMarginAccounts(),
     ]);
     console.log(`Fetched ${allMarginAccounts.length} margin accounts`);
-    for (const rawMarginAccount of allMarginAccounts) {
+    const positionAccounts = allMarginAccounts.filter((a) =>
+      a.account.positions.some((p) => p.size > BigInt(0))
+    );
+    const positionAccountsNeg = allMarginAccounts.filter((a) =>
+      a.account.positions.some((p) => p.size < BigInt(0))
+    );
+
+    const onlyNegativeDeduped = positionAccountsNeg.filter(
+      (a) => !positionAccounts.some((a2) => a2.address.toString() === a.address.toString())
+    );
+    const onlyPositive = positionAccounts.filter(
+      (a) => !positionAccountsNeg.some((a2) => a2.address.toString() === a.address.toString())
+    );
+    const sumOfPositionsIsNegative = allMarginAccounts.filter(
+      (a) =>
+        a.account.positions.reduce((acc, position) => acc + BigInt(position.size), BigInt(0)) <
+        BigInt(0)
+    );
+    // const combined = onlyNegativeDeduped.concat(onlyPositive);
+    // const sumIsNegative = combined.filter(
+    //   (a.reduce
+    //     (acc, position) => acc.add(position.size), BigInt(0)
+    //   ) < BigInt(0)
+    // );
+    // positionAccountsNeg.reduce(
+    //   (acc, a) => acc + a.account.positions.reduce((acc2, p) => acc2 + p.size, BigInt(0)),
+    //   BigInt(0)
+    // );
+    const nonZeroAccounts = allMarginAccounts.filter((a) => a.account.margin > BigInt(0));
+    console.log({
+      sumOfPositionsIsNegative: sumOfPositionsIsNegative.length,
+      positionAccountsNeg: positionAccountsNeg.length,
+      onlyNegativeDeduped: onlyNegativeDeduped.length,
+      onlyPositive: onlyPositive.length,
+      nonZeroAccounts: nonZeroAccounts.length,
+      // combined: combined.length,
+    });
+    console.log(
+      positionAccounts[
+        Math.floor(Math.random() * positionAccounts.length)
+      ].account.margin.toString()
+    );
+    console.log(nonZeroAccounts?.[0].account?.margin?.toString());
+    // console.log(allMarginAccounts.filter(
+    //   (a) => a.address.toString() === (nonZeroAccounts[0].address.toString() || positionAccounts[0].address.toString())
+    // )[0].account)
+
+    let checkCount = 0;
+    const totalToCount = sumOfPositionsIsNegative.length;
+    for (const rawMarginAccount of sumOfPositionsIsNegative) {
+      checkCount++;
       const marginAccount = new MarginAccountWrapper(
         rawMarginAccount.account,
         rawMarginAccount.address
@@ -121,6 +183,18 @@ async function runLiquidator({
           liquidatorSigner.publicKey
         );
       }
+      if (checkCount === totalToCount) {
+        // if (checkCount % 1000 === 0) {
+        console.log(`Checked ${totalToCount} at ${new Date().toISOString()}`);
+      }
+      // delete
+      //   const reduceToTotalpositionMaintenanceMargin = (acc, position) => {
+      //     const market = markets[position.marketId()];
+      //     const priceFeed = priceFeeds[market.priceFeed().toBase58()];
+      //     const indexPrice = preciseMath_1.PreciseIntWrapper.fromDecimal(priceFeed.aggregate.price, 0);
+      //     const { maintenanceMargin: positionMaintenanceMargin, } = market.getPositionRequiredMargins(position.size(), indexPrice, exchange.collateralExpo());
+      //     return acc.add(positionMaintenanceMargin);
+      // };
       const margins = marginAccount.getAccountMargins(
         new ExchangeWrapper(exchange),
         markets,
@@ -204,11 +278,12 @@ async function liquidate(
   params?: LiquidateParams
 ): Promise<string> {
   const [marketAddresses, priceFeedAddresses] = getMarketsAndPriceFeeds(marginAccount, markets);
-  const { blockhash: recentBlockhash } = await connection.getLatestBlockhash();
+  // const { blockhash: recentBlockhash } = await connection.getLatestBlockhash();
   const tx = sdk
     .transactionBuilder()
     .liquidate(accounts, marketAddresses, priceFeedAddresses, params)
-    .feePayer(feePayer)
-    .buildSigned(signers, recentBlockhash);
-  return await sendAndConfirmTransaction(connection, tx, signers);
+    .buildUnsigned();
+  // .feePayer(feePayer)
+  // .buildSigned(signers, recentBlockhash);
+  return await sendAndConfirmTransactionOptimized(tx, privateKeyString, [publicKey(exchangeLUT)]);
 }
