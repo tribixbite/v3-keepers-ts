@@ -26,31 +26,27 @@ import bs58 from "bs58";
 import * as dotenv from "dotenv";
 import { sendAndConfirmTransactionOptimized } from "./landTransaction";
 import { publicKey } from "@metaplex-foundation/umi";
-// import { getPositionedMarginAccounts } from "./getActiveMarginAccounts";
+
 dotenv.config();
-const privateKeyString = process.env.PRIVATE_KEY as string;
+const privateKeyString = process.env.PRIVATE_KEY;
 const exchangeLUT = "D36r7C1FeBUARN7f6mkzdX67UJ1b1nUJKC7SWBpDNWsa";
-// const rpcUrl = process.env.RPC_URL as string; // Use your preferred RPC URL
+const rpcUrl = process.env.RPC_URL; // Use your preferred RPC URL
+const liquidatorAddress = process.env.LIQUIDATOR_MARGIN_ACCOUNT;
 
 (async function main() {
   console.log("Starting liquidator");
-  if (process.env.RPC_URL === undefined) {
-    throw new Error("Missing rpc url");
-  }
-  if (process.env.LIQUIDATOR_MARGIN_ACCOUNT === undefined) {
-    throw new Error("Missing liquidator margin account");
-  }
-  if (process.env.PRIVATE_KEY === undefined) {
-    throw new Error("Missing liquidator signer");
-  }
+  if (!rpcUrl) throw new Error("Missing RPC_URL");
+  if (!liquidatorAddress) throw new Error("Missing LIQUIDATOR_MARGIN_ACCOUNT");
+  if (!privateKeyString) throw new Error("Missing PRIVATE_KEY");
+
   // Note: only handling single exchange
   const [exchangeAddress] = getExchangePda(0);
-  const liquidatorMarginAccount = translateAddress(process.env.LIQUIDATOR_MARGIN_ACCOUNT);
+  const liquidatorMarginAccount = translateAddress(liquidatorAddress);
   const liquidatorSigner = Keypair.fromSecretKey(bs58.decode(privateKeyString));
   const interval = parseInt(process.env.INTERVAL ?? "300");
   const commitment = process.env.COMMITMENT as Commitment | undefined;
-  const sdk = new ParclV3Sdk({ rpcUrl: process.env.RPC_URL, commitment });
-  const connection = new Connection(process.env.RPC_URL, commitment);
+  const sdk = new ParclV3Sdk({ rpcUrl, commitment });
+  const connection = new Connection(rpcUrl, commitment);
   await runLiquidator({
     sdk,
     connection,
@@ -110,56 +106,10 @@ async function runLiquidator({
       sdk.accountFetcher.getAllMarginAccounts(),
     ]);
     console.log(`Fetched ${allMarginAccounts.length} margin accounts`);
-    const positionAccounts = allMarginAccounts.filter((a) =>
-      a.account.positions.some((p) => p.size > BigInt(0))
-    );
-    const positionAccountsNeg = allMarginAccounts.filter((a) =>
-      a.account.positions.some((p) => p.size < BigInt(0))
-    );
-
-    const onlyNegativeDeduped = positionAccountsNeg.filter(
-      (a) => !positionAccounts.some((a2) => a2.address.toString() === a.address.toString())
-    );
-    const onlyPositive = positionAccounts.filter(
-      (a) => !positionAccountsNeg.some((a2) => a2.address.toString() === a.address.toString())
-    );
-    const sumOfPositionsIsNegative = allMarginAccounts.filter(
-      (a) =>
-        a.account.positions.reduce((acc, position) => acc + BigInt(position.size), BigInt(0)) <
-        BigInt(0)
-    );
-    // const combined = onlyNegativeDeduped.concat(onlyPositive);
-    // const sumIsNegative = combined.filter(
-    //   (a.reduce
-    //     (acc, position) => acc.add(position.size), BigInt(0)
-    //   ) < BigInt(0)
-    // );
-    // positionAccountsNeg.reduce(
-    //   (acc, a) => acc + a.account.positions.reduce((acc2, p) => acc2 + p.size, BigInt(0)),
-    //   BigInt(0)
-    // );
-    const nonZeroAccounts = allMarginAccounts.filter((a) => a.account.margin > BigInt(0));
-    console.log({
-      sumOfPositionsIsNegative: sumOfPositionsIsNegative.length,
-      positionAccountsNeg: positionAccountsNeg.length,
-      onlyNegativeDeduped: onlyNegativeDeduped.length,
-      onlyPositive: onlyPositive.length,
-      nonZeroAccounts: nonZeroAccounts.length,
-      // combined: combined.length,
-    });
-    console.log(
-      positionAccounts[
-        Math.floor(Math.random() * positionAccounts.length)
-      ].account.margin.toString()
-    );
-    console.log(nonZeroAccounts?.[0].account?.margin?.toString());
-    // console.log(allMarginAccounts.filter(
-    //   (a) => a.address.toString() === (nonZeroAccounts[0].address.toString() || positionAccounts[0].address.toString())
-    // )[0].account)
 
     let checkCount = 0;
-    const totalToCount = sumOfPositionsIsNegative.length;
-    for (const rawMarginAccount of sumOfPositionsIsNegative) {
+    const totalToCount = allMarginAccounts.length;
+    for (const rawMarginAccount of allMarginAccounts) {
       checkCount++;
       const marginAccount = new MarginAccountWrapper(
         rawMarginAccount.account,
