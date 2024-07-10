@@ -4,7 +4,6 @@ import {
   PublicKey as UmiPublicKey,
   //   Keypair as UmiKeypair,
   createSignerFromKeypair,
-  publicKey,
   signerIdentity,
   transactionBuilder,
 } from "@metaplex-foundation/umi";
@@ -18,6 +17,7 @@ import {
 } from "@metaplex-foundation/mpl-toolbox";
 import {
   fromWeb3JsInstruction,
+  fromWeb3JsLegacyTransaction,
   fromWeb3JsTransaction,
   toWeb3JsLegacyTransaction,
   toWeb3JsPublicKey,
@@ -30,7 +30,7 @@ import {
   VersionedTransaction,
   Transaction as Web3Transaction,
 } from "@solana/web3.js";
-import { encode, decode } from "bs58";
+import { decode, encode } from "bs58";
 
 const MAX_RETRIES = 50; // count
 const MAX_LOOPS = 5; // count
@@ -76,27 +76,21 @@ export async function sendAndConfirmTransactionOptimized(
   //       : umi.transactions.deserializeMessage(fromWeb3JsTransaction(transaction).serializedMessage);
 
   // const ixs = toWeb3JsInstructions(txMessage.instructions);
-  const umiTransaction = umi.transactions.create({
-    instructions:
-      transaction instanceof Web3Transaction
-        ? transaction.instructions.map((ix) => ({
-            keys: ix.keys.map((k) => ({
-              pubkey: publicKey(k.pubkey),
-              isSigner: k.isSigner,
-              isWritable: k.isWritable,
-            })),
-            programId: publicKey(ix.programId),
-            data: ix.data,
-          }))
-        : transaction instanceof VersionedTransaction
-        ? toWeb3JsLegacyTransaction(
-            umi.transactions.deserialize(transaction.serialize())
-          ).instructions.map((ix) => fromWeb3JsInstruction(ix))
-        : transaction.map((ix) => fromWeb3JsInstruction(ix)),
-    payer: umiSigner.publicKey,
-    blockhash: "",
-  });
+  const umiTransaction =
+    transaction instanceof VersionedTransaction
+      ? fromWeb3JsTransaction(transaction)
+      : transaction instanceof Web3Transaction
+      ? fromWeb3JsLegacyTransaction(transaction)
+      : umi.transactions.create({
+          instructions: transaction.map((ix) => fromWeb3JsInstruction(ix)),
+          payer: umiSigner.publicKey,
+          blockhash: "",
+        });
+  //   toWeb3JsLegacyTransaction(
+  //             umi.transactions.deserialize(transaction.serialize())
+  //           ).instructions.map((ix) => fromWeb3JsInstruction(ix))
   const serializedTxMsg = encode(umiTransaction.serializedMessage);
+  console.log({ serializedTxMsg });
   const fixMeIxs =
     transaction instanceof Web3Transaction
       ? transaction.instructions.map((ix) => fromWeb3JsInstruction(ix))
@@ -132,11 +126,7 @@ export async function sendAndConfirmTransactionOptimized(
   //       })
   //     ).serializedMessage
   //   );
-  const accountKeys = wrappedIxs
-    .flatMap((ix) => ix.instruction)
-    .flatMap((ix) => ix.keys)
-    .flatMap((a) => String(a.pubkey)); //.flatMap((key) => key.pubkey.toBase58()))
-  //   console.log({ serializedBase58Tx, heliusEndpoint });
+  const accountKeys = umiTransaction.message.accounts;
   const priorityFee = await getPriorityFeeEstimate(heliusEndpoint, accountKeys);
   console.log({ priorityFee });
 
