@@ -6,7 +6,8 @@
     "build": "tsc -p tsconfig.json && tsc -p tsconfig-cjs.json",
     "clean": "rm -rf ./dist",
     "prepublishOnly": "yarn build",
-    "lint": "eslint . --ext .js,.jsx,.ts,.tsx"
+    "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
+    "liquid": "bun run ./src/bin/liquidator.ts"
   },
   "dependencies": {
     "@metaplex-foundation/mpl-toolbox": "^0.9.4",
