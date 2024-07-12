@@ -18,7 +18,7 @@ import {
   Liquidator,
   checkAddresses,
   getMarginAddressesFromSlice,
-} from "./getActiveMarginAccounts";
+} from "@utils/getActiveMarginAccounts";
 
 dotenv.config();
 const privateKeyString = process.env.PRIVATE_KEY;

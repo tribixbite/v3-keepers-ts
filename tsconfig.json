@@ -1,11 +1,11 @@
 {
   "compilerOptions": {
     "target": "esnext",
-    "module": "CommonJS",
+    "module": "esnext",
     "allowJs": false,
     "declaration": true,
     "declarationMap": true,
-    "lib": ["dom", "es6"],
+    "lib": ["dom", "es6", "esnext"],
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -16,13 +16,21 @@
     "experimentalDecorators": true,
     "importHelpers": true,
     "sourceMap": true,
-    "rootDir": "src",
+    "rootDir": ".",
     "outDir": "dist/esm",
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noImplicitAny": true
+    "noImplicitAny": true,
+    "baseUrl": "." /* Specify the base directory to resolve non-relative module names. */,
+    "paths": {
+      "@/*": ["src/*"],
+      "@utils/*": ["src/utils/*"]
+    } /* Specify a set of entries that re-map imports to additional lookup locations. */
+    // "rootDirs": [],                                   /* Allow multiple folders to be treated as one when resolving modules. */
+    // "typeRoots": [],                                  /* Specify multiple folders that act like './node_modules/@types'. */
   },
-  "include": ["src"]
+  "include": ["src"],
+  "types": ["bun-types"]
 }
