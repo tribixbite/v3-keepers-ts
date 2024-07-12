@@ -51,7 +51,8 @@ type TransactionInput = Web3Transaction | VersionedTransaction | TransactionInst
 export async function sendAndConfirmTransactionOptimized(
   transaction: TransactionInput,
   privateKey?: string | Uint8Array,
-  lookupTables: UmiPublicKey[] = []
+  lookupTables: UmiPublicKey[] = [],
+  ignoreSimulationFailure = false
   //   signer?: string | Uint8Array
 ): Promise<string> {
   const rpc = process.env.RPC_URL;
@@ -76,6 +77,17 @@ export async function sendAndConfirmTransactionOptimized(
   //       : umi.transactions.deserializeMessage(fromWeb3JsTransaction(transaction).serializedMessage);
 
   // const ixs = toWeb3JsInstructions(txMessage.instructions);
+  if (transaction instanceof Web3Transaction && !transaction.recentBlockhash) {
+    const { value } = (await connection.getLatestBlockhashAndContext("confirmed")) as {
+      context: { slot: number };
+      value: { blockhash: string; lastValidBlockHeight: number };
+    };
+    console.timeEnd(`${new Date().toISOString()}: getLatestBlockhashAndContext`);
+    const { blockhash } = value;
+    // const minContextSlot = context.slot;
+    transaction.recentBlockhash = blockhash;
+    transaction.feePayer = toWeb3JsPublicKey(umiSigner.publicKey);
+  }
   const umiTransaction =
     transaction instanceof VersionedTransaction
       ? fromWeb3JsTransaction(transaction)
@@ -131,31 +143,40 @@ export async function sendAndConfirmTransactionOptimized(
   console.log({ priorityFee });
 
   const luts = lookupTables.length > 0 ? await fetchAllAddressLookupTable(umi, lookupTables) : [];
-  const simulationResult = await getSimulationComputeUnits(
-    connection,
-    toWeb3JsLegacyTransaction(umiTransaction).instructions,
-    toWeb3JsPublicKey(umi.payer.publicKey),
-    luts.length > 0
-      ? luts.map(
-          (table) =>
-            new AddressLookupTableAccount({
-              key: toWeb3JsPublicKey(table.publicKey),
-              state: {
-                deactivationSlot: table.deactivationSlot,
-                lastExtendedSlot: Number(table.lastExtendedSlot),
-                lastExtendedSlotStartIndex: table.lastExtendedStartIndex,
-                // authority: table.authority,
-                addresses: table.addresses.map((address) => toWeb3JsPublicKey(address)),
-              },
-            })
-        )
-      : []
-  );
-  console.log({ simulationResult });
+  let simulationResult = 1_200_000;
+  try {
+    const simulate = await getSimulationComputeUnits(
+      connection,
+      toWeb3JsLegacyTransaction(umiTransaction).instructions,
+      toWeb3JsPublicKey(umi.payer.publicKey),
+      luts.length > 0
+        ? luts.map(
+            (table) =>
+              new AddressLookupTableAccount({
+                key: toWeb3JsPublicKey(table.publicKey),
+                state: {
+                  deactivationSlot: table.deactivationSlot,
+                  lastExtendedSlot: Number(table.lastExtendedSlot),
+                  lastExtendedSlotStartIndex: table.lastExtendedStartIndex,
+                  // authority: table.authority,
+                  addresses: table.addresses.map((address) => toWeb3JsPublicKey(address)),
+                },
+              })
+          )
+        : []
+    );
+    if (simulate) {
+      simulationResult = simulate;
+      ignoreSimulationFailure = true;
+    }
+  } catch (error) {
+    console.error(`Simulation failed:`, error);
+    if (!ignoreSimulationFailure) return "";
+  }
 
   // Calculate optimal compute unit limit
   //   const computeUnits = simulationResult.result.unitsConsumed || 1_200_000;
-  const computeUnits = simulationResult || 1_200_000;
+  const computeUnits = simulationResult ?? 1_200_000;
   const computeUnitLimit = Math.ceil(computeUnits * 1.1); // Add 10% buffer
 
   // Construct final transaction with optimal compute unit limit
