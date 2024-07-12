@@ -101,8 +101,8 @@ export async function sendAndConfirmTransactionOptimized(
   //   toWeb3JsLegacyTransaction(
   //             umi.transactions.deserialize(transaction.serialize())
   //           ).instructions.map((ix) => fromWeb3JsInstruction(ix))
-  const serializedTxMsg = encode(umiTransaction.serializedMessage);
-  console.log({ serializedTxMsg });
+  // const serializedTxMsg = encode(umiTransaction.serializedMessage);
+  // console.log({ serializedTxMsg });
   const fixMeIxs =
     transaction instanceof Web3Transaction
       ? transaction.instructions.map((ix) => fromWeb3JsInstruction(ix))
