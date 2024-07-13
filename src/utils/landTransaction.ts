@@ -10,6 +10,7 @@ import {
 import { createUmi } from "@metaplex-foundation/umi-bundle-defaults";
 // import { createWeb3JsRpc } from "@metaplex-foundation/umi-rpc-web3js";
 import {
+  createLut,
   fetchAllAddressLookupTable,
   mplToolbox,
   setComputeUnitLimit,
@@ -43,7 +44,7 @@ const MAX_SECONDS_TO_SEND_TRANSACTION = 110; // s
 
 type TransactionInput = Web3Transaction | VersionedTransaction | TransactionInstruction[];
 
-//  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 //  const getExponentialBackoff = (attempt: number, baseDelay: number = INITIAL_RETRY_DELAY) =>
 //    Math.min(baseDelay * Math.pow(2, attempt), 10000);
@@ -52,9 +53,11 @@ export async function sendAndConfirmTransactionOptimized(
   transaction: TransactionInput,
   privateKey?: string | Uint8Array,
   lookupTables: UmiPublicKey[] = [],
-  ignoreSimulationFailure = false
+  ignoreSimulationFailure = false,
+  createLUT = true
   //   signer?: string | Uint8Array
 ): Promise<string> {
+  // console.log(JSON.stringify(transaction));
   const rpc = process.env.RPC_URL;
   if (!rpc) throw new Error("Missing RPC URL");
   const heliusEndpoint = rpc.includes("helius") ? rpc : process.env.HELIUS_URL;
@@ -70,77 +73,57 @@ export async function sendAndConfirmTransactionOptimized(
   const umiKeypair = umi.eddsa.createKeypairFromSecretKey(feePayerArr);
   const umiSigner = createSignerFromKeypair({ eddsa: umi.eddsa }, umiKeypair);
   umi.use(signerIdentity(umiSigner));
-
-  //   const txMessage =
-  //     transaction instanceof Web3Transaction
-  //       ? umi.transactions.deserializeMessage(transaction.serializeMessage())
-  //       : umi.transactions.deserializeMessage(fromWeb3JsTransaction(transaction).serializedMessage);
-
-  // const ixs = toWeb3JsInstructions(txMessage.instructions);
-  if (transaction instanceof Web3Transaction && !transaction.recentBlockhash) {
+  async function blockhashEnsure(transaction: Web3Transaction): Promise<Web3Transaction> {
     const { value } = (await connection.getLatestBlockhashAndContext("confirmed")) as {
       context: { slot: number };
       value: { blockhash: string; lastValidBlockHeight: number };
     };
-    console.timeEnd(`${new Date().toISOString()}: getLatestBlockhashAndContext`);
     const { blockhash } = value;
     // const minContextSlot = context.slot;
     transaction.recentBlockhash = blockhash;
     transaction.feePayer = toWeb3JsPublicKey(umiSigner.publicKey);
+    return transaction;
   }
-  const umiTransaction =
-    transaction instanceof VersionedTransaction
-      ? fromWeb3JsTransaction(transaction)
-      : transaction instanceof Web3Transaction
-      ? fromWeb3JsLegacyTransaction(transaction)
-      : umi.transactions.create({
-          instructions: transaction.map((ix) => fromWeb3JsInstruction(ix)),
-          payer: umiSigner.publicKey,
-          blockhash: "",
-        });
-  //   toWeb3JsLegacyTransaction(
-  //             umi.transactions.deserialize(transaction.serialize())
-  //           ).instructions.map((ix) => fromWeb3JsInstruction(ix))
-  // const serializedTxMsg = encode(umiTransaction.serializedMessage);
-  // console.log({ serializedTxMsg });
-  const fixMeIxs =
-    transaction instanceof Web3Transaction
-      ? transaction.instructions.map((ix) => fromWeb3JsInstruction(ix))
-      : transaction instanceof VersionedTransaction
-      ? toWeb3JsLegacyTransaction(fromWeb3JsTransaction(transaction)).instructions.map((ix) =>
-          fromWeb3JsInstruction(ix)
-        )
-      : transaction.map((ix) => fromWeb3JsInstruction(ix));
+  const umiTransaction = Array.isArray(transaction)
+    ? umi.transactions.create({
+        instructions: transaction.map((ix) => fromWeb3JsInstruction(ix)),
+        payer: umiSigner.publicKey,
+        blockhash: "",
+      })
+    : Object.keys(transaction).includes("message")
+    ? fromWeb3JsTransaction(transaction as VersionedTransaction)
+    : fromWeb3JsLegacyTransaction(await blockhashEnsure(transaction as Web3Transaction));
+
+  const fixMeIxs = Array.isArray(transaction)
+    ? transaction.map((ix) => fromWeb3JsInstruction(ix))
+    : Object.keys(transaction).includes("message")
+    ? toWeb3JsLegacyTransaction(
+        fromWeb3JsTransaction(transaction as VersionedTransaction)
+      ).instructions.map((ix) => fromWeb3JsInstruction(ix))
+    : (transaction as Web3Transaction).instructions.map((ix) => fromWeb3JsInstruction(ix));
+
   const wrappedIxs = fixMeIxs.map((ix) => ({
     instruction: ix,
     signers: [umi.payer],
     bytesCreatedOnChain: 0,
   }));
 
-  //   if (lookupTables.length === 0) { this works but adds time
-  //     const addresses = fixMeIxs
-  //       .map((ix) => ix.keys)
-  //       .flat()
-  //       .map((k) => k.pubkey);
-  //     console.log({ addresses });
-  //     const [lutBuilder, lut] = createLut(umi, {
-  //       recentSlot: BigInt(await umi.rpc.getSlot({ commitment: "finalized" }) - 5),
-  //       addresses,
-  //     });
-  //     await lutBuilder.sendAndConfirm(umi);
-  //     lookupTables.push(lut.publicKey);
-  //     console.log({ lut });
-  //   }
-  //   const serializedBase58Tx = encode(
-  //     (
-  //       await transactionBuilder(wrappedIxs).buildWithLatestBlockhash(umi, {
-  //         commitment: "confirmed",
-  //       })
-  //     ).serializedMessage
-  //   );
   const accountKeys = umiTransaction.message.accounts;
+  if (createLUT && lookupTables.length === 0 && accountKeys.length > 10) {
+    const lut = await createLookupTable(accountKeys, umi);
+    lookupTables.push(lut.publicKey);
+    await sleep(1000);
+  }
+  // const serializedBase58Tx = encode(
+  //   (
+  //     await transactionBuilder(wrappedIxs).buildWithLatestBlockhash(umi, {
+  //       commitment: "confirmed",
+  //     })
+  //   ).serializedMessage
+  // );
+
   const priorityFee = await getPriorityFeeEstimate(heliusEndpoint, accountKeys);
-  console.log({ priorityFee });
+  // console.log({ priorityFee });
 
   const luts = lookupTables.length > 0 ? await fetchAllAddressLookupTable(umi, lookupTables) : [];
   let simulationResult = 1_200_000;
@@ -170,12 +153,12 @@ export async function sendAndConfirmTransactionOptimized(
       ignoreSimulationFailure = true;
     }
   } catch (error) {
-    console.error(`Simulation failed:`, error);
+    console.info(`Simulation failed:`, (error as Error).message);
     if (!ignoreSimulationFailure) return "";
+    console.log("Ignoring simulation failure and continuing...");
   }
 
   // Calculate optimal compute unit limit
-  //   const computeUnits = simulationResult.result.unitsConsumed || 1_200_000;
   const computeUnits = simulationResult ?? 1_200_000;
   const computeUnitLimit = Math.ceil(computeUnits * 1.1); // Add 10% buffer
 
@@ -198,7 +181,7 @@ export async function sendAndConfirmTransactionOptimized(
         // throw new Error("Transaction confirmation failed");
       }
     } catch (error) {
-      console.error(`Attempt ${retries + 1} failed:`, error);
+      console.info(`Attempt ${retries + 1} failed:`, error);
       if (retries === MAX_RETRIES - 1) {
         throw new Error(`Failed to send transaction after ${MAX_RETRIES} attempts`);
       }
@@ -207,6 +190,15 @@ export async function sendAndConfirmTransactionOptimized(
   }
 
   throw new Error("Unexpected error in retry loop");
+}
+
+async function createLookupTable(addresses: UmiPublicKey[], umi: Umi) {
+  const [lutBuilder, lut] = createLut(umi, {
+    recentSlot: BigInt((await umi.rpc.getSlot({ commitment: "finalized" })) - 5),
+    addresses,
+  });
+  await lutBuilder.sendAndConfirm(umi);
+  return lut;
 }
 
 async function sendAndConfirmWithRetry(
@@ -317,11 +309,6 @@ async function sendAndConfirmWithRetry(
     );
     return encode(txSignature);
   }
-
-  //   if (!sig) {
-  //     throw new Error("Failed to send transaction");
-  //   }
-
   //   if (result.value.err) {
   //     throw new Error(`Transaction failed: ${JSON.stringify(result.value.err)}`);
   //   }

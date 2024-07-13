@@ -1,12 +1,4 @@
-import type { Commitment } from "@metaplex-foundation/umi";
-import {
-  RpcAccount,
-  RpcDataFilter,
-  RpcDataFilterMemcmp,
-  Umi,
-  deserializeAccount,
-  publicKey,
-} from "@metaplex-foundation/umi";
+import { RpcAccount, publicKey } from "@metaplex-foundation/umi";
 import { createUmi } from "@metaplex-foundation/umi-bundle-defaults";
 import {
   Serializer,
@@ -20,10 +12,6 @@ import {
 } from "@metaplex-foundation/umi/serializers";
 import {
   Address,
-  Exchange,
-  ExchangeWrapper,
-  LiquidateAccounts,
-  LiquidateParams,
   MARGIN_ACCOUNT_DISCRIMINATOR,
   MarginAccount,
   MarginAccountWrapper,
@@ -32,19 +20,18 @@ import {
   PARCL_V3_PROGRAM_ID,
   ParclV3Sdk,
   Position,
-  PriceFeedMap,
   ProgramAccount,
 } from "@parcl-oss/v3-sdk";
 import { positionSerializer } from "@parcl-oss/v3-sdk/dist/cjs/types/accounts/serializers";
-import { Keypair } from "@solana/web3.js";
-import { decode, encode } from "bs58";
+import { decode } from "bs58";
 import Decimal from "decimal.js";
-import { sendAndConfirmTransactionOptimized } from "./landTransaction";
+import { getAccountClone } from "./programAccounts";
+import { calculateDuration } from "./dateTime";
 
 function isDefined<T>(value: T | undefined): value is T {
   return value !== undefined;
 }
-const exchangeLUT = "D36r7C1FeBUARN7f6mkzdX67UJ1b1nUJKC7SWBpDNWsa";
+export const exchangeLUT = "D36r7C1FeBUARN7f6mkzdX67UJ1b1nUJKC7SWBpDNWsa";
 
 export type HighRiskStore = {
   address: Address;
@@ -54,116 +41,7 @@ export type Liquidator = {
   liquidatorMarginAccount: string;
   privateKeyString: string;
 };
-export async function checkAddresses(
-  rpcUrl: string,
-  addresses: Address[],
-  // highRiskStore: HighRiskStore[],
-  liquidator: Liquidator,
-  marketData: {
-    exchange: Exchange;
-    dataMaps: [MarketMap, PriceFeedMap];
-  },
-  tryLiquidate?: Address
-) {
-  const commitment: Commitment = "confirmed";
-  const sdk = new ParclV3Sdk({ rpcUrl, commitment });
-  const { exchange, dataMaps } = marketData;
-  const [markets, priceFeeds] = dataMaps;
-  const { liquidatorMarginAccount, privateKeyString } = liquidator;
-  const lookupLimit = process.env.LOOKUP_LIMIT;
-  const liquidatorSigner = Keypair.fromSecretKey(decode(privateKeyString));
-
-  const threshhold = parseInt(process.env.THRESHHOLD ?? "75");
-
-  const limit = lookupLimit ? parseInt(lookupLimit) : undefined;
-  const addressesToGet = addresses.slice(0, limit);
-
-  const activeMarginAccounts = await getActiveMarginAccounts(rpcUrl, addressesToGet);
-
-  let checkCount = 0;
-  const totalToCount = activeMarginAccounts.length;
-  const highRiskStore: HighRiskStore[] = [];
-  for (const rawMarginAccount of activeMarginAccounts) {
-    // TODO: extract top 100 at risk accounts by calling getLiquidationProximity, pass in to next loop
-    checkCount++;
-    const marginAccount = new MarginAccountWrapper(
-      rawMarginAccount.account,
-      rawMarginAccount.address
-    );
-    if (tryLiquidate && marginAccount.address === tryLiquidate) {
-      console.log(`Attempting to liquidate ${marginAccount.address}`);
-      await liquidate(
-        sdk,
-        marginAccount,
-        {
-          marginAccount: rawMarginAccount.address,
-          exchange: rawMarginAccount.account.exchange,
-          owner: rawMarginAccount.account.owner,
-          liquidator: liquidatorSigner.publicKey,
-          liquidatorMarginAccount,
-        },
-        markets,
-        encode(liquidatorSigner.secretKey)
-      );
-    }
-    if (marginAccount.inLiquidation()) {
-      console.log(`Liquidating account already in liquidation (${marginAccount.address})`);
-      await liquidate(
-        sdk,
-        marginAccount,
-        {
-          marginAccount: rawMarginAccount.address,
-          exchange: rawMarginAccount.account.exchange,
-          owner: rawMarginAccount.account.owner,
-          liquidator: liquidatorSigner.publicKey,
-          liquidatorMarginAccount,
-        },
-        markets,
-        encode(liquidatorSigner.secretKey)
-      );
-    }
-    const margins = marginAccount.getAccountMargins(
-      new ExchangeWrapper(exchange),
-      markets,
-      priceFeeds,
-      Math.floor(Date.now() / 1000)
-    );
-    if (margins.canLiquidate()) {
-      console.log(`Starting liquidation for ${marginAccount.address}`);
-      const signature = await liquidate(
-        sdk,
-        marginAccount,
-        {
-          marginAccount: rawMarginAccount.address,
-          exchange: rawMarginAccount.account.exchange,
-          owner: rawMarginAccount.account.owner,
-          liquidator: liquidatorSigner.publicKey,
-          liquidatorMarginAccount,
-        },
-        markets,
-        encode(liquidatorSigner.secretKey)
-      );
-      console.log("Signature: ", signature);
-    }
-    const liquidationProximity = calculateLiquidationProximityScore(margins);
-    if (
-      liquidationProximity > threshhold
-      // && !highRiskStore.find((a) => a.address === rawMarginAccount.address)
-    ) {
-      highRiskStore.push({
-        address: rawMarginAccount.address,
-        score: liquidationProximity,
-      });
-    }
-
-    if (checkCount === totalToCount) {
-      console.log(`Checked ${totalToCount} at ${new Date().toISOString()}`);
-    }
-  }
-  return highRiskStore;
-}
-
-function calculateLiquidationProximityScore(margins: MarginsWrapper): number {
+export function calculateLiquidationProximityScore(margins: MarginsWrapper): number {
   const totalRequired = margins.totalRequiredMargin().val.toPrecision(9);
   //  val: 1276751502711168.411,
   const available = margins.margins.availableMargin.val.toPrecision(9);
@@ -196,18 +74,20 @@ export async function getActiveMarginAccounts(rpcUrl: string, addresses: Address
   //   }
   // });
   const end = performance.now();
-  console.log(`Found ${nonZeroAccounts.length} non-zero margin accounts in ${end - start} ms`);
+  console.log(
+    `Found ${nonZeroAccounts.length} non-zero margin accounts in ${calculateDuration(start, end)}`
+  );
   // console.log(stringifiedMarginAccountData(nonZeroAccounts[0]));
   return nonZeroAccounts;
 }
 
-const discriminatorFilter = {
+export const discriminatorFilter = {
   memcmp: {
     offset: 0, // Offset for the discriminator
     bytes: new Uint8Array(MARGIN_ACCOUNT_DISCRIMINATOR),
   },
 };
-const marginAccountFilter = {
+export const marginAccountFilter = {
   dataSize: 904, // Filter for accounts size in bytes
 };
 const filters = [discriminatorFilter];
@@ -221,7 +101,7 @@ export function filterMargined(accounts: ProgramAccount<MarginAccount>[]) {
   return accounts.filter((account) => account.account.margin !== BigInt(0));
 }
 
-const marginAccountSerializer: Serializer<MarginAccount> = struct([
+export const marginAccountSerializer: Serializer<MarginAccount> = struct([
   ["positions", array(positionSerializer, { size: 12 })],
   ["margin", u64()],
   ["maxLiquidationFee", u64()],
@@ -237,22 +117,6 @@ type MarginMargin = {
   margin: bigint;
 };
 const mmSerializer: Serializer<MarginMargin> = struct([["margin", u64()]]);
-
-async function getProgramAccountsAndRemoveDiscriminators(
-  filters: RpcDataFilter[] = [discriminatorFilter],
-  umi: Umi
-): Promise<RpcAccount[]> {
-  const rawAccounts = await umi.rpc.getProgramAccounts(publicKey(PARCL_V3_PROGRAM_ID), {
-    filters: [...filters, marginAccountFilter],
-  });
-
-  const rawAccountsNoDisc = [];
-  for (const rawAccount of rawAccounts) {
-    rawAccount.data.copyWithin(0, 8);
-    rawAccountsNoDisc.push(rawAccount);
-  }
-  return rawAccountsNoDisc;
-}
 
 export type MarginAccountPositionsOnly = {
   positions: Position[];
@@ -275,7 +139,7 @@ export async function getMarginAddressesFromSlice(rpcUrl: string) {
     filters: [...filters, marginAccountFilter],
   });
   const end = performance.now();
-  console.log(`Fetched ${rawAccounts.length} slices in ${end - start} ms`);
+  console.log(`Fetched ${rawAccounts.length} slices in ${calculateDuration(start, end)}`);
   // measure and print how long this takes:
 
   const marginedAccountAddresses = rawAccounts
@@ -322,23 +186,6 @@ export async function getPositionedMarginAccounts(rpcUrl: string) {
   const filteredAccounts = filterMargined(allAccounts);
   return filterPositioned(filteredAccounts);
 }
-async function getAccountClone(
-  rpcUrl: string,
-  filters: RpcDataFilterMemcmp[] = [discriminatorFilter]
-): Promise<ProgramAccount<MarginAccount>[]> {
-  const umi = createUmi(rpcUrl);
-  const startTime = performance.now();
-  const rawAccounts = await getProgramAccountsAndRemoveDiscriminators(filters, umi);
-  const endTime = performance.now();
-
-  console.log(`getProgramAccountsAndRemoveDiscriminators in ${endTime - startTime} ms`);
-  const converted = rawAccounts.map((rawAccount) => ({
-    address: rawAccount.publicKey,
-    account: deserializeAccount(rawAccount, marginAccountSerializer), //Serializer<MarginAccount>),
-  }));
-  return converted;
-}
-
 const positionCount = 12; // Total number of positions
 const positionSize = 56; // Size of each position in bytes
 
@@ -372,47 +219,7 @@ export function stringifiedMarginAccountData(account: ProgramAccount<MarginAccou
   );
 }
 
-async function liquidate(
-  sdk: ParclV3Sdk,
-  marginAccount: MarginAccountWrapper,
-  accounts: LiquidateAccounts,
-  markets: MarketMap,
-  privateKeyString: string,
-  params: LiquidateParams = {
-    isFullLiquidation: false,
-  }
-): Promise<string> {
-  const [marketAddresses, priceFeedAddresses] = getMarketsAndPriceFeeds(marginAccount, markets);
-  const liquidatorSigner = Keypair.fromSecretKey(decode(privateKeyString));
-
-  // const fromKeypair = Keypair.fromSecretKey(decode(privateKeyString));
-  // const connection = new Connection(process.env.RPC_URL as string, "confirmed");
-  // const { blockhash: recentBlockhash } = await connection.getLatestBlockhash();
-  const tx = sdk
-    .transactionBuilder()
-    .liquidate(accounts, marketAddresses, priceFeedAddresses, params)
-    .feePayer(liquidatorSigner.publicKey)
-    //   .buildSigned([liquidatorSigner], recentBlockhash);
-    // return await sendAndConfirmTransaction(connection, tx, [liquidatorSigner])
-    // .then((signature) => {
-    //   console.log(`Liquidation signature: ${signature}`);
-    //   return signature;
-    // })
-    // .catch((e) => {
-    //   if (e instanceof SendTransactionError) {
-    //     const logs = e.getLogs(connection);
-    //     console.error(`Error logs: ${logs}`);
-    //   }
-    //   console.error(`Error liquidating: ${e}`);
-    //   return e;
-    // });
-    // alternatively:
-    // await helius.rpc.sendSmartTransaction([instructions], [fromKeypair]);
-    .buildUnsigned();
-  return await sendAndConfirmTransactionOptimized(tx, privateKeyString, [publicKey(exchangeLUT)]);
-}
-
-function getMarketsAndPriceFeeds(
+export function getMarketsAndPriceFeeds(
   marginAccount: MarginAccountWrapper,
   markets: MarketMap
 ): [Address[], Address[]] {
