@@ -11,6 +11,7 @@ import { Keypair } from "@solana/web3.js";
 import { decode } from "bs58";
 import { sendAndConfirmTransactionOptimized } from "./landTransaction";
 import { getMarketsAndPriceFeeds, exchangeLUT } from "./marginAccounts";
+import { pushNotify } from "./dateTime";
 // import { getLogs } from "@solana-developers/helpers";
 
 type LiquidateOptions = {
@@ -29,7 +30,11 @@ export async function liquidate(
     ignoreSimulationFailure: false,
     isFullLiquidation: false,
   };
-
+  try {
+    pushNotify("Liquidating account: " + accounts.marginAccount);
+  } catch (e) {
+    console.error(e, "Error liquidating account: ", accounts.marginAccount);
+  }
   const [marketAddresses, priceFeedAddresses] = getMarketsAndPriceFeeds(marginAccount, markets);
   const liquidatorSigner = Keypair.fromSecretKey(decode(privateKeyString));
   const params: LiquidateParams = {

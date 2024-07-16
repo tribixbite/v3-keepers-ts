@@ -26,7 +26,7 @@ import { positionSerializer } from "@parcl-oss/v3-sdk/dist/cjs/types/accounts/se
 import { decode } from "bs58";
 import Decimal from "decimal.js";
 import { getAccountClone } from "./programAccounts";
-import { calculateDuration } from "./dateTime";
+import { calculateDuration, clockTime } from "./dateTime";
 
 function isDefined<T>(value: T | undefined): value is T {
   return value !== undefined;
@@ -61,7 +61,9 @@ export function calculateLiquidationProximityScore(margins: MarginsWrapper): num
   return parseInt(score);
 }
 
-export async function getActiveMarginAccounts(rpcUrl: string, addresses: Address[]) {
+export async function getActiveMarginAccounts(rpcUrl: string, addresses: Address[],
+  log: boolean = false
+) {
   const start = performance.now();
   const sdk = new ParclV3Sdk({ rpcUrl, commitment: "confirmed" });
   const marginAccounts = await sdk.accountFetcher.getMarginAccounts(addresses);
@@ -74,8 +76,8 @@ export async function getActiveMarginAccounts(rpcUrl: string, addresses: Address
   //   }
   // });
   const end = performance.now();
-  console.log(
-    `Found ${nonZeroAccounts.length} non-zero margin accounts in ${calculateDuration(start, end)}`
+  if (log) console.log(
+    `Retrieved ${nonZeroAccounts.length} non-zero margin accounts in ${calculateDuration(start, end)}`
   );
   // console.log(stringifiedMarginAccountData(nonZeroAccounts[0]));
   return nonZeroAccounts;
@@ -131,7 +133,7 @@ export const test = {
 };
 // filters: RpcDataFilterMemcmp[]
 
-export async function getMarginAddressesFromSlice(rpcUrl: string) {
+export async function getMarginAddressesFromSlice(rpcUrl: string, log: boolean = false) {
   const umi = createUmi(rpcUrl);
   const start = performance.now();
   const rawAccounts = await umi.rpc.getProgramAccounts(publicKey(PARCL_V3_PROGRAM_ID), {
@@ -139,7 +141,7 @@ export async function getMarginAddressesFromSlice(rpcUrl: string) {
     filters: [...filters, marginAccountFilter],
   });
   const end = performance.now();
-  console.log(`Fetched ${rawAccounts.length} slices in ${calculateDuration(start, end)}`);
+  if (log) console.log(`${clockTime}Fetched ${rawAccounts.length} slices in ${calculateDuration(start, end)}`);
   // measure and print how long this takes:
 
   const marginedAccountAddresses = rawAccounts

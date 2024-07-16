@@ -25,6 +25,7 @@ const commitment = (process.env.COMMITMENT ?? "confirmed") as Commitment;
 if (!rpcUrl) throw new Error("Missing RPC_URL");
 if (!liquidatorAddress) throw new Error("Missing LIQUIDATOR_MARGIN_ACCOUNT");
 if (!privateKeyString) throw new Error("Missing PRIVATE_KEY");
+let lastLog = Date.now() - 1000 * 60 * 60;
 
 (async function main() {
   console.log("Starting liquidator");
@@ -60,7 +61,9 @@ async function runLiquidator({
   exchangeAddress,
   liquidator,
 }: RunLiquidatorParams): Promise<void> {
-  const highRiskStore: HighRiskStore[] = [];
+  const highRiskStore: HighRiskStore[] = [
+    { address: "7gUkzEhQtjzhrEtHpW1S12iaNvg8kaS4awghpgUjwhSa", score: 99 },
+  ];
   const sdk = new ParclV3Sdk({ rpcUrl, commitment });
   const exchange = await sdk.accountFetcher.getExchange(exchangeAddress);
   if (!exchange) throw new Error("Invalid exchange address");
@@ -68,19 +71,21 @@ async function runLiquidator({
   // eslint-disable-next-line no-constant-condition
   const executeLiquidatorCycle = async (firstRun: boolean) => {
     try {
+      const log = Date.now() - lastLog > 1000 * 60 * 5;
+      if (log) lastLog = Date.now();
       const dataMaps = await fetchMarketData(exchange, exchangeAddress, sdk);
       const marketData = { exchange, dataMaps };
       const [markets] = dataMaps;
       if (firstRun) console.log(`Fetched ${Object.keys(markets).length} market and price feeds`);
       await processHighRiskAccounts(rpcUrl, liquidator, marketData, highRiskStore, instantCheck);
 
-      const addressSlices = await getMarginAddressesFromSlice(rpcUrl);
+      const addressSlices = await getMarginAddressesFromSlice(rpcUrl, log);
       // TODO: this should only be done once, then subscribe to onProgramAccountChange with margin account filter
       // TODO: similarly, yellowstone/geyser can be used to subscribe to market + margin account updates
 
       // I was unable to access "Source Code URL	https://github.com/ParclFinance/parcl-v3"
 
-      const highRisk = await checkAddresses(rpcUrl, addressSlices, liquidator, marketData);
+      const highRisk = await checkAddresses(rpcUrl, addressSlices, liquidator, marketData, log);
       //replace stored high risk store with new one
       highRiskStore.length = 0;
       highRiskStore.push(...highRisk);
@@ -101,7 +106,8 @@ async function processHighRiskAccounts(
   liquidator: Liquidator,
   marketData: MarketData,
   highRiskStore: HighRiskStore[],
-  instantCheck: number
+  instantCheck: number,
+  log: boolean = false
 ) {
   if (highRiskStore.length > 0) {
     const highRiskScoreSorted = highRiskStore.sort((a, b) => b.score - a.score);
@@ -110,16 +116,17 @@ async function processHighRiskAccounts(
         "Stored high risk accounts < INSTANT_CHECK_QUANTITY. Try lowering the threshold."
       );
     const slicedHighRisk = highRiskScoreSorted.slice(0, instantCheck);
-    console.log(
-      `Checking ${slicedHighRisk.length} high risk accounts. Top 2: `,
-      slicedHighRisk.slice(0, 2)
-    );
+    if (log)
+      console.log(
+        `Checking ${slicedHighRisk.length} high risk accounts. Highest is ${slicedHighRisk[0].address} with score ${slicedHighRisk[0].score}`
+      );
     const highRiskAddresses = slicedHighRisk.map((a) => a.address);
     await checkAddresses(
       rpcUrl,
       highRiskAddresses,
       liquidator,
-      marketData
+      marketData,
+      log
       // highRiskAddresses[0]
     );
   } else {

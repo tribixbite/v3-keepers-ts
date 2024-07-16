@@ -26,6 +26,7 @@ export async function checkAddresses(
     exchange: Exchange;
     dataMaps: [MarketMap, PriceFeedMap];
   },
+  log: boolean = false,
   tryLiquidate?: Address
 ) {
   const commitment: Commitment = "confirmed";
@@ -41,7 +42,7 @@ export async function checkAddresses(
   const limit = lookupLimit ? parseInt(lookupLimit) : undefined;
   const addressesToGet = addresses.slice(0, limit);
 
-  const activeMarginAccounts = await getActiveMarginAccounts(rpcUrl, addressesToGet);
+  const activeMarginAccounts = await getActiveMarginAccounts(rpcUrl, addressesToGet, log);
 
   const highRiskStore: HighRiskStore[] = [];
   for (const rawMarginAccount of activeMarginAccounts) {
