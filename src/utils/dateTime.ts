@@ -1,3 +1,7 @@
+import { webhookUrl } from "@/config/envLoader";
+
+export const liquidStart = Date.now();
+
 export function calculateDuration(start: number, end: number): string {
   const durationMs = end - start;
   const durationSeconds = (durationMs / 1000).toFixed(2);
@@ -6,11 +10,17 @@ export function calculateDuration(start: number, end: number): string {
 
 export const clockTime = () => new Date().toLocaleTimeString() + ": ";
 
+export const decorateLog = (message: string, start?: number, end?: number) => {
+  if (start !== undefined && end !== undefined) {
+    return `${clockTime()}${message} in ${calculateDuration(start, end)}`;
+  }
+  return `${clockTime()}${message}`;
+};
 export function pushNotify(message: string) {
   // Send message to Discord
-  const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
   if (webhookUrl === undefined) {
-    throw new Error("Missing Discord webhook URL");
+    console.info("Missing Discord webhook URL");
+    return;
   }
   fetch(webhookUrl, {
     method: "POST",

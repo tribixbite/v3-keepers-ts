@@ -25,8 +25,8 @@ import {
 import { positionSerializer } from "@parcl-oss/v3-sdk/dist/cjs/types/accounts/serializers";
 import { decode } from "bs58";
 import Decimal from "decimal.js";
+import { decorateLog } from "./dateTime";
 import { getAccountClone } from "./programAccounts";
-import { calculateDuration, clockTime } from "./dateTime";
 
 function isDefined<T>(value: T | undefined): value is T {
   return value !== undefined;
@@ -61,7 +61,9 @@ export function calculateLiquidationProximityScore(margins: MarginsWrapper): num
   return parseInt(score);
 }
 
-export async function getActiveMarginAccounts(rpcUrl: string, addresses: Address[],
+export async function getActiveMarginAccounts(
+  rpcUrl: string,
+  addresses: Address[],
   log: boolean = false
 ) {
   const start = performance.now();
@@ -76,9 +78,10 @@ export async function getActiveMarginAccounts(rpcUrl: string, addresses: Address
   //   }
   // });
   const end = performance.now();
-  if (log) console.log(
-    `Retrieved ${nonZeroAccounts.length} non-zero margin accounts in ${calculateDuration(start, end)}`
-  );
+  if (log)
+    console.log(
+      decorateLog(`Retrieved ${nonZeroAccounts.length} non-zero margin accounts`, start, end)
+    );
   // console.log(stringifiedMarginAccountData(nonZeroAccounts[0]));
   return nonZeroAccounts;
 }
@@ -141,15 +144,13 @@ export async function getMarginAddressesFromSlice(rpcUrl: string, log: boolean =
     filters: [...filters, marginAccountFilter],
   });
   const end = performance.now();
-  if (log) console.log(`${clockTime}Fetched ${rawAccounts.length} slices in ${calculateDuration(start, end)}`);
-  // measure and print how long this takes:
+  if (log) console.log(decorateLog(`Fetched ${rawAccounts.length} slices`, start, end));
 
   const marginedAccountAddresses = rawAccounts
     .filter((account) => {
       return deserializeMargin(account.data) !== BigInt(0);
     })
     .map((rawAccount) => rawAccount.publicKey);
-  // console.log("marginAccounts", marginAccounts.length);
   return marginedAccountAddresses as Address[];
 }
 

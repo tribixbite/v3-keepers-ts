@@ -1,35 +1,38 @@
 import { publicKey } from "@metaplex-foundation/umi-public-keys";
 import {
-  ParclV3Sdk,
-  MarginAccountWrapper,
   LiquidateAccounts,
-  MarketMap,
-  liquidateParamsSerializer,
   LiquidateParams,
+  MarginAccountWrapper,
+  MarketMap,
+  ParclV3Sdk,
+  liquidateParamsSerializer,
 } from "@parcl-oss/v3-sdk";
 import { Keypair } from "@solana/web3.js";
 import { decode } from "bs58";
-import { sendAndConfirmTransactionOptimized } from "./landTransaction";
-import { getMarketsAndPriceFeeds, exchangeLUT } from "./marginAccounts";
 import { pushNotify } from "./dateTime";
+import { sendAndConfirmTransactionOptimized } from "./landTransaction";
+import { exchangeLUT, getMarketsAndPriceFeeds } from "./marginAccounts";
 // import { getLogs } from "@solana-developers/helpers";
 
+export type LiquidateInputs = {
+  sdk: ParclV3Sdk;
+  marginAccount: MarginAccountWrapper;
+  accounts: LiquidateAccounts;
+  markets: MarketMap;
+  privateKeyString: string;
+};
 type LiquidateOptions = {
   ignoreSimulationFailure: boolean;
   isFullLiquidation: boolean;
 };
 export async function liquidate(
-  sdk: ParclV3Sdk,
-  marginAccount: MarginAccountWrapper,
-  accounts: LiquidateAccounts,
-  markets: MarketMap,
-  privateKeyString: string,
-  options?: LiquidateOptions
-): Promise<string> {
-  const opts = options ?? {
+  liquidateInputs: LiquidateInputs,
+  options: LiquidateOptions = {
     ignoreSimulationFailure: false,
     isFullLiquidation: false,
-  };
+  }
+): Promise<string> {
+  const { sdk, marginAccount, accounts, markets, privateKeyString } = liquidateInputs;
   try {
     pushNotify("Liquidating account: " + accounts.marginAccount);
   } catch (e) {
@@ -38,7 +41,7 @@ export async function liquidate(
   const [marketAddresses, priceFeedAddresses] = getMarketsAndPriceFeeds(marginAccount, markets);
   const liquidatorSigner = Keypair.fromSecretKey(decode(privateKeyString));
   const params: LiquidateParams = {
-    isFullLiquidation: opts.isFullLiquidation,
+    isFullLiquidation: options.isFullLiquidation,
   };
   // const fromKeypair = Keypair.fromSecretKey(decode(privateKeyString));
   // const connection = new Connection(process.env.RPC_URL as string, "confirmed");
@@ -58,7 +61,7 @@ export async function liquidate(
       tx,
       privateKeyString,
       [publicKey(exchangeLUT)],
-      opts.ignoreSimulationFailure
+      options.ignoreSimulationFailure
     );
     return result;
   } catch (e) {

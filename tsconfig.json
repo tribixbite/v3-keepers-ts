@@ -5,13 +5,16 @@
     "allowJs": false,
     "declaration": true,
     "declarationMap": true,
+    "allowImportingTsExtensions": true,
     "lib": ["dom", "es6", "esnext"],
     "strict": true,
     "esModuleInterop": true,
+    "emitDeclarationOnly": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "moduleResolution": "node",
+    "moduleDetection": "force",
+    "moduleResolution": "bundler",
     "typeRoots": ["node_modules/@types"],
     "experimentalDecorators": true,
     "importHelpers": true,
@@ -23,10 +26,11 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noImplicitAny": true,
-    "baseUrl": "." /* Specify the base directory to resolve non-relative module names. */,
+    "baseUrl": "./src" /* Specify the base directory to resolve non-relative module names. */,
     "paths": {
-      "@/*": ["src/*"],
-      "@utils/*": ["src/utils/*"]
+      "@/*": ["./*"],
+      "@utils/*": ["./utils/*"],
+      "@workers/*": ["./workers/*"]
     } /* Specify a set of entries that re-map imports to additional lookup locations. */
     // "rootDirs": [],                                   /* Allow multiple folders to be treated as one when resolving modules. */
     // "typeRoots": [],                                  /* Specify multiple folders that act like './node_modules/@types'. */

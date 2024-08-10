@@ -32,6 +32,21 @@ import {
   Transaction as Web3Transaction,
 } from "@solana/web3.js";
 import { decode, encode } from "bs58";
+import { heliusUrl, rpcUrl } from "@/config/envLoader";
+
+
+const clockTime = () => new Date().toLocaleTimeString() + ": ";
+function calculateDuration(start: number, end: number): string {
+  const durationMs = end - start;
+  const durationSeconds = (durationMs / 1000).toFixed(2);
+  return durationSeconds + "s";
+}
+const decorateLog = (message: string, start?: number, end?: number) => {
+  if (start !== undefined && end !== undefined) {
+    return `${clockTime()}${message} in ${calculateDuration(start, end)}`;
+  }
+  return `${clockTime()}${message}`;
+};
 
 const MAX_RETRIES = 50; // count
 const MAX_LOOPS = 5; // count
@@ -58,9 +73,9 @@ export async function sendAndConfirmTransactionOptimized(
   //   signer?: string | Uint8Array
 ): Promise<string> {
   // console.log(JSON.stringify(transaction));
-  const rpc = process.env.RPC_URL;
+  const rpc = rpcUrl;
   if (!rpc) throw new Error("Missing RPC URL");
-  const heliusEndpoint = rpc.includes("helius") ? rpc : process.env.HELIUS_URL;
+  const heliusEndpoint = rpc.includes("helius") ? rpc : heliusUrl;
   if (!heliusEndpoint) throw new Error("Missing Helius URL");
   const feePayer = privateKey ?? process.env.FEE_PAYER;
   if (!feePayer) throw new Error("Missing private key for fee payer");
@@ -155,7 +170,7 @@ export async function sendAndConfirmTransactionOptimized(
   } catch (error) {
     console.info(`Simulation failed:`, (error as Error).message);
     if (!ignoreSimulationFailure) return "";
-    console.log("Ignoring simulation failure and continuing...");
+    console.log(decorateLog("Ignoring simulation failure and continuing..."));
   }
 
   // Calculate optimal compute unit limit
@@ -169,14 +184,14 @@ export async function sendAndConfirmTransactionOptimized(
     .setAddressLookupTables(luts)
     .setFeePayer(umi.payer);
   for (let retries = 0; retries < MAX_LOOPS; retries++) {
-    console.log("looping");
+    console.log(decorateLog("looping"));
     try {
       const signature = await sendAndConfirmWithRetry(finalTransaction, umi, connection);
       if (signature) {
         console.log(`Transaction confirmed: ${signature}`);
         return signature;
       } else {
-        console.log("Transaction failed, retrying...");
+        console.log(decorateLog("Transaction failed, retrying..."));
         await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY));
         // throw new Error("Transaction confirmation failed");
       }

@@ -2,12 +2,14 @@
   "name": "v3-keepers-ts",
   "version": "0.0.0",
   "license": "MIT",
+  "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json && tsc -p tsconfig-cjs.json",
     "clean": "rm -rf ./dist",
     "prepublishOnly": "yarn build",
     "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
-    "liquid": "bun run ./src/bin/liquidator.ts"
+    "liquid": "bun run ./src/bin/liquidator.ts",
+    "liquidbin": "bun build --compile --minify --sourcemap ./src/bin/liquidator.ts --outfile ./src/bin/liquid"
   },
   "dependencies": {
     "@metaplex-foundation/mpl-toolbox": "^0.9.4",
@@ -28,12 +30,11 @@
   "devDependencies": {
     "@types/bn.js": "^5.1.5",
     "@types/bs58": "^4.0.4",
+    "@types/bun": "^1.1.6",
     "@types/node": "^20.11.0",
     "@typescript-eslint/eslint-plugin": "^6.18.1",
     "@typescript-eslint/parser": "^6.18.1",
-    "bun-types": "^1.1.18",
     "eslint": "^8.56.0",
-    "ts-node": "^10.9.2",
     "typescript": "^5.3.3"
   },
   "files": [
